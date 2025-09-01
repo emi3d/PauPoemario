@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Poemario — Pau Pacha</title>
+<style>
+  body{
+    margin:0;
+    background:#f7f7f8;
+    color:#111;
+    font-family:"Courier New", Courier, monospace;
+    padding:48px 20px;
+  }
+  h1.name{
+    font-size:28px;
+    margin:0 0 16px 0;
+  }
+  #typed{
+    white-space:pre-wrap;
+    font-size:18px;
+    line-height:1.6;
+    letter-spacing:.2px;
+  }
+  .overlay{
+    position:absolute;
+    inset:0;
+    pointer-events:none;
+  }
+  .floating{
+    position:absolute;
+    font-size:16px;
+    white-space:nowrap;
+    opacity:0;
+    transition:opacity 0.3s;
+  }
+  .floating.show{opacity:1;}
+  .floating.fade{opacity:0;}
+</style>
+</head>
+<body>
+  <h1 class="name">Pau,</h1>
+  <div id="typed"></div>
+  <div class="overlay" id="overlay"></div>
+
+<script>
+const CONFIG = {
+  typingSpeedBase:40,
+  typingSpeedJitter:25,
+  maxFloating:30,
+  phrasePause:2000,
+  zoomScale:0.6
+};
+
+const typedEl=document.getElementById("typed");
+const overlay=document.getElementById("overlay");
+let audioCtx=null,masterGain=null,muted=false;
+function ensureAudio(){
+  if(!audioCtx){
+    audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+    masterGain=audioCtx.createGain();
+    masterGain.gain.value=0.12;
+    masterGain.connect(audioCtx.destination);
+  }
+}
+function playClick(){
+  if(muted) return;
+  ensureAudio();
+  if(audioCtx.state==="suspended") return; // still locked
+  const t=audioCtx.currentTime;
+  const o=audioCtx.createOscillator(),g=audioCtx.createGain();
+  o.type="square";o.frequency.value=1200+Math.random()*600;
+  o.connect(g);g.connect(masterGain);
+  g.gain.setValueAtTime(0.001,t);
+  g.gain.exponentialRampToValueAtTime(1,t+0.005);
+  g.gain.exponentialRampToValueAtTime(0.001,t+0.06);
+  o.start(t);o.stop(t+0.07);
+}
+function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
+async function typeText(el,text){
+  el.textContent="";
+  for(const ch of text){
+    el.textContent+=ch;
+    if(ch.trim()) playClick();
+    else if(Math.random()<0.05) playClick();
+    await sleep(CONFIG.typingSpeedBase+(Math.random()*2-1)*CONFIG.typingSpeedJitter);
+  }
+}
+function rectOverlap(a,b){
+  return !(a.x+a.w<=b.x||b.x+b.w<=a.x||a.y+a.h<=b.y||b.y+b.h<=a.y);
+}
+
+function spawnPhrase(text){
+  const el=document.createElement("div");
+  el.className="floating";
+  overlay.appendChild(el);
+
+  // --- medir tamaño final ---
+  el.style.visibility="hidden";
+  el.textContent=text; // texto completo para medir
+  document.body.offsetHeight; // reflow
+  const w=el.offsetWidth,h=el.offsetHeight;
+  el.style.visibility="";
+  el.textContent=""; // vaciar para empezar a tipear
+
+  // --- calcular posiciones posibles ---
+  const cont=overlay.getBoundingClientRect();
+  const existing=[...overlay.querySelectorAll(".floating")].map(f=>{
+    return {x:f.offsetLeft,y:f.offsetTop,w:f.offsetWidth,h:f.offsetHeight};
+  });
+  const cardRect=typedEl.getBoundingClientRect();
+  const cardLocal={x:cardRect.left-cont.left,y:cardRect.top-cont.top,
+                   w:cardRect.width,h:cardRect.height};
+
+  let x=0,y=0,ok=false;
+  for(let i=0;i<80;i++){
+    x=Math.random()*(cont.width-w-20);
+    y=Math.random()*(cont.height-h-20);
+    const r={x,y,w,h};
+    if(!existing.some(e=>rectOverlap(r,e)) && !rectOverlap(r,cardLocal)){
+      ok=true;break;
+    }
+  }
+  if(!ok){el.remove();return;}
+  el.style.left=x+"px"; el.style.top=y+"px";
+
+  // --- animación letra por letra ---
+  el.classList.add("show");
+  (async()=>{
+    for(const ch of text){
+      el.textContent+=ch;
+      if(ch.trim()) playClick();
+      await sleep(CONFIG.typingSpeedBase+(Math.random()*2-1)*CONFIG.typingSpeedJitter);
+    }
+    await sleep(CONFIG.phrasePause);
+    el.classList.add("fade");
+    await sleep(500);
+    el.remove();
+    spawnPhrase(randomPhrase());
+  })();
+}
+
+
+function randomPhrase(){return phrases[Math.floor(Math.random()*phrases.length)];}
+
+// ---- Load texts ----
+let phrases=[];
+(async()=>{
+  let main="",pRaw="";
+  try{main=await (await fetch("text.txt")).text();}catch{main="Carta de ejemplo...\n\nCon cariño.";}
+  try{pRaw=await (await fetch("text2.txt")).text();}catch{pRaw="Frase uno,Frase dos,Frase tres";}
+  phrases=pRaw.split(",").map(s=>s.trim()).filter(Boolean);
+  // wait for gesture to unlock audio
+  document.body.addEventListener("click",()=>{ensureAudio();audioCtx.resume();},{once:true});
+  document.body.addEventListener("keydown",()=>{ensureAudio();audioCtx.resume();},{once:true});
+  await typeText(typedEl,main);
+  document.body.style.transform=`scale(${CONFIG.zoomScale})`;
+  for(let i=0;i<CONFIG.maxFloating;i++){
+    spawnPhrase(randomPhrase());
+  }
+})();
+</script>
+</body>
+</html>
